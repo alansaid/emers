@@ -1,8 +1,6 @@
-"""Compatibility import for EMERS versions before 0.1.
-
-New code should import these names directly from :mod:`emers`.
-"""
+"""Energy measurement tools for recommender-system experiments."""
 
 from emers.measurement import MeasurementLogResult, MeasurementManager
 
 __all__ = ["MeasurementLogResult", "MeasurementManager"]
+__version__ = "0.1.0"

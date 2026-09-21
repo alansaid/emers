@@ -1,224 +1,140 @@
 # EMERS: Energy Meter for Recommender Systems
 
-The paper (link coming soon) was accepted at the [RecSoGood 2024 Workshop](https://recsogood.github.io/recsogood24/) co-located with the [18th ACM Conference on Recommender Systems](https://recsys.acm.org/recsys24/).
+EMERS measures, records, visualizes, and reports the energy consumption of
+recommender-system experiments using supported smart plugs.
 
-## Table of Contents
+The accompanying paper was accepted at the
+[RecSoGood 2024 Workshop](https://recsogood.github.io/recsogood24/), colocated
+with the 18th ACM Conference on Recommender Systems. A
+[demo video](https://youtu.be/vmXOcrVpRDg) shows the original workflow.
 
-- [Introduction](#introduction)
-- [Features](#features)
-- [Requirements](#requirements)
-- [Energy Meter Interfaces](#energy-meter-interfaces)
-    - [Supported Devices](#supported-devices)
-    - [Setup Instructions for Supported Devices](#setup-instructions-for-supported-devices)
-    - [Adding Support for New Devices](#adding-support-for-new-devices)
-- [Usage Examples](#usage-examples)
-    - [Measuring Energy Consumption](#measuring-energy-consumption)
-        - [Continuous Measurement](#continuous-measurement)
-        - [Integrated Measurement](#integrated-measurement)
-    - [Monitoring and Reporting Energy Consumption](#monitoring-and-reporting-energy-consumption)
-        - [Running the Monitoring Interface](#running-the-monitoring-interface)
-        - [Using the Monitoring Interface and Creating Reports](#using-the-monitoring-interface)
+## Installation
 
-## Introduction
+EMERS requires Python 3.10 or newer.
 
-EMERS is the first software library that measures, monitors, records, and shares the energy consumption of recommender
-systems experiments.
+```bash
+python -m pip install emers
+```
 
-EMERS reads and logs energy readings from smart plugs, organizes them based on the associated research experiment,
-provides a user interface to monitor and analyze measurements, and creates a standardized, automated report to share
-with the community.
+For development from a clone:
 
-A demo video that showcases the installation and usage of EMERS is available on [Youtube](https://youtu.be/vmXOcrVpRDg).
+```bash
+python -m pip install -e .
+```
 
-## Features
+## Quick start
 
-1. A user interface that enables researchers to monitor, visualize, and analyze the energy consumption of their
-   experiments interactively.
-2. Generate a standardized report of the energy consumption of recommender systems experiments.
-3. Measure energy consumption with integrated, per-experiment energy consumption logging through an API.
-4. Standalone energy consumption logging in the background.
+Initialize a workspace in the current directory:
 
-## Requirements
+```bash
+emers init
+```
 
-1. A smart plug that can read and transmit energy consumption data.
-   See [Energy Meter Interfaces](#energy-meter-interfaces) for supported devices. Alternatively,
-   see [Adding Support for New Devices](#adding-support-for-new-devices) to learn how to add support for a new device.
-2. Python 3.10 and the required packages. Install them with `pip install -r requirements.txt`.
+This safely creates `settings.json`, `monitor_settings.json`, `measurements/`,
+and `report/`. Existing configuration files are never overwritten. The default
+configuration includes a mock smart plug, so EMERS can be tried immediately:
 
----
+```bash
+emers measure --device MockPlug
+```
 
-# Energy Meter Interfaces
+Press Ctrl+C to stop recording, then launch the monitoring interface:
 
-The energy meter interfaces are stored in the `meters` folder. They implement an asynchronous
-method `get_data_<device_type>(**kwargs)` that reads data from a specific smart plug and returns
-a `MeasurementLogResult` object that contains energy measurements.
+```bash
+emers monitor
+```
 
-## Supported Devices
+Open <http://127.0.0.1:5000> in a browser.
 
-0. [Mock Plug (generates fake data for debugging)](meters/mock_api.py)
-1. [Shelly Plug Plus S](meters/shelly_api.py)
-2. [TP-Link Tapo P115](meters/tapo_api.py)
+Use `--workspace` to keep data in another directory:
 
-## Setup Instructions for Supported Devices
+```bash
+emers --workspace path/to/experiment init
+emers --workspace path/to/experiment measure --device MockPlug
+emers --workspace path/to/experiment monitor
+```
 
-1. Obtain either the Shelly Plug Plus S or the TP-Link Tapo P115 smart plug.
-2. Read the manual of the smart plug to find out how to connect it to your Wi-Fi network and perform the initial setup.
-   Make sure that the smart plug is connected to the same network as the computer running this software.
-3. Open [settings.json](settings.json) and add an entry for the smart plug. The key is the desired identifier of the
-   plug. The value should be a dictionary with the following keys:
-    1. `device_type`: The type of the device. This must be one of the supported device types.
-    2. `device_ip`: The IP address of the plug.
-    3. For Shelly Plug Plus S:
-        1. `device_id`: The device ID of the plug. This is usually `0` if this is the only Shelly Plug Plus S on the
-           network.
+Run `emers --help` or `emers <command> --help` for all options. EMERS can also
+be invoked as `python -m emers`.
 
-       Example settings entry for Shelly Plug Plus S:
-          ```json
-          "shelly_meter": {
-              "device_type": "shelly",
-              "device_ip": "192.168.2.1",
-              "device_id": "0",
-          }
-          ```
-    4. For TP-Link Tapo P115:
-        1. `tapo_user`: The username of the Tapo account that the plug is connected to.
-        2. `tapo_password`: The password of the Tapo account that the plug is connected to.
+## Configuring a smart plug
 
-       Example settings entry for TP-Link Tapo P115:
-          ```json
-          "tapo_meter": {
-              "device_type": "tapo",
-              "device_ip": "192.168.2.2",
-              "tapo_user": "yourname@provider.com",
-              "tapo_password": "password",
-          }
-          ```
+Devices are defined in the workspace's `settings.json`. Do not commit this file
+when it contains credentials. See [`settings.example.json`](settings.example.json)
+for a safe example.
 
-## Adding Support for New Devices
+### Shelly Plug Plus S
 
-1. Choose a name for your new device type. We will refer to this name as `<device_type>`.
-2. Add a new file `<device_type>_api.py` in the `meters` directory.
-3. Implement an asynchronous function `get_data_<device_type>(**kwargs) -> MeasurementLogResult` in the newly created
-   file.
-   Document the required keyword arguments that are passed to this function. These must be defined when configuring a
-   device of `<device_type>` in `settings.json`.
+```json
+{
+  "shelly_meter": {
+    "device_type": "shelly",
+    "device_ip": "192.168.2.1",
+    "device_id": "0"
+  }
+}
+```
 
----
+### TP-Link Tapo P115
 
-# Usage Examples
+```json
+{
+  "tapo_meter": {
+    "device_type": "tapo",
+    "device_ip": "192.168.2.2",
+    "tapo_user": "yourname@example.com",
+    "tapo_password": "password"
+  }
+}
+```
 
-## Measuring Energy Consumption
+The plug and the computer running EMERS must be reachable on the same network.
 
-Measuring energy consumption comes in two measurement modes: continuous and integrated.
+## Measuring from Python
 
-1. Continuous measurement is designed to be run as a separate Python script. It measures and logs energy consumption
-   data
-   until stopped. Continuous measurement is implemented in [continuous_measurement.py](continuous_measurement.py).
-2. Integrated measurement is designed to be used within code that executes experiments. Integrated measurement is
-   implemented in [measurement_manager.py](measurement_manager.py).
+`MeasurementManager` is a context manager that records measurements while an
+experiment runs:
 
-### Continuous Measurement
+```python
+from emers import MeasurementManager
 
-1. To run continuous measurement, execute the following command in your terminal:
+with MeasurementManager(
+    device_name="shelly_meter",
+    experiment_name="model-training",
+):
+    model.fit(train_data)
+```
 
-    ```bash
-     python continuous_measurement.py --device_name <device_name> --polling_rate <polling_rate> --log_interval <log_interval>
-    ```
+Its optional `workspace` argument selects the directory containing
+`settings.json` and receiving measurements. The default is the current working
+directory.
 
-    1. Replace `<device_name>` with the name of the device as specified in `settings.json`.
-    2. The default `<polling_rate>` is 0.5 (seconds), e.g., the smart plug is polled twice a second.
-    3. The default `<log_interval>` is 300 (seconds), e.g., a new log file is created every 300 seconds.
+## Adding a meter integration
 
-2. The logs are saved in the `measurements` directory. A new directory is created for each device, and
-   continuous measurement logs are saved in a directory named `continuous`.
-3. Continuous measurement can be stopped and restarted at any time.
+Add a module under `src/emers/meters/` named after the device type. For a
+device type named `example`, implement:
 
-### Integrated Measurement
+```python
+async def get_data_example(**kwargs) -> MeasurementLogResult:
+    ...
+```
 
-1. The following Python code is a simplified example of what a recommender systems experiment may generally look like:
+The function must return an `emers.MeasurementLogResult`. Document all required
+configuration keys and add tests for the integration.
 
-    ```python
-    from my_functions import load_data, split_data, train_model, evaluate_model
+## Development and releases
 
-    data = load_data()
-    train, test = split_data(data)
-    model = train_model(train)
-    predictions = model.predict(test)
-    evaluate_model(predictions)
-    ```
+Install the project in editable mode with test tools, then run:
 
-    1. The code snippet assumes that the functions `load_data`, `split_data`, `train_model`, and `evaluate_model` are
-       defined elsewhere in the project.
+```bash
+pytest
+python -m build
+python -m twine check dist/*
+```
 
-2. Integrated measurement can be added to the code snippet above to log energy consumption data at specific points
-   in during execution. For example, to log only the training phase, the code snippet would be modified to look like
-   this:
+Release artifacts should include both the wheel and source distribution from
+`dist/`. Publishing through PyPI Trusted Publishing is recommended.
 
-    ```python
-    from my_functions import load_data, split_data, train_model, evaluate_model
-    from measurement_manager import MeasurementManager
-    
-    data = load_data()    
-    train, test = split_data(data)
-    with MeasurementManager(device_name=device_name, experiment_name=experiment_name, polling_rate=polling_rate, log_interval=log_interval) as manager:
-        model = train_model(train)
-    predictions = model.predict(test)
-    evaluate_model(predictions)
-    ```   
+## License
 
-    1. Replace `device_name` with the name of the device as specified in `settings.json`.
-    2. Replace `experiment_name` with the name of the experiment, e.g., `my_algorithm_training`.
-    3. The default `polling_rate` is 0.5 (seconds), e.g., the smart plug is polled twice a second.
-    4. The default `log_interval` is 300 (seconds), e.g., a new log file is created every 300 seconds.
-    5. The `MeasurementManager` class is a context manager that logs energy consumption data during the execution of the
-       code block within the `with` statement. It automatically starts measuring and logging when entering the block and
-       stops logging when exiting the block, organizing the logs by device and experiment.
-
-3. The logs are saved in the `measurements` directory. A new directory is created for each device, and
-   integrated measurements are saved in a directory named `experiment_name`.
-
-## Monitoring and Reporting Energy Consumption
-
-The monitoring interface is a web application that visualizes energy consumption data. It is implemented
-in [monitoring_interface.py](monitoring_interface.py).
-
-### Running the Monitoring Interface
-
-1. To start the monitoring interface, execute the following command in your terminal:
-
-    ```bash
-    python monitoring_interface.py --ip <ip> --port <port>
-    ```
-    1. Replace `<ip>` with the IP address of the computer running the monitoring interface. The default is `localhost`.
-    2. Replace `<port>` with the port number to run the monitoring interface on. The default is `5000`.
-
-2. The monitoring interface can be accessed in a web browser at `http://<ip>:<port>`.
-
-### Using the Monitoring Interface and Creating Reports
-
-The monitoring interface consists of four major regions. The regions are marked with red numbers in the preview here:
-
-![user_interface.png](user_interface.png)
-
-1. **Experiment Selection and Report Generation**: A dropdown menu to select the experiment to monitor and buttons to
-   generate an energy consumption report.
-    1. There are three dropdown menus: One for the smart plug, one for the experiment, and one for specific log files.
-       The selected items will be used to display the energy consumption graph and information.
-    2. There are two buttons to generate reports: One for a summary report of the selected experiment and one for
-       a detailed report of the whole project.
-2. **Cost/Footprint Settings and Graph Settings**: Input fields to set the cost and carbon footprint of energy and to
-   toggle live updating and smoothness of the energy consumption graph.
-    1. The cost of energy per kWh, its currency, the carbon footprint of energy per kWh in gCO2e, and the carbon
-       footprint of a car per km in gCO2e can be adjusted here. The values will be used to calculate the cost and carbon
-       footprint of the energy consumption. To persistently modify these settings,
-       modify [monitor_settings.json](monitor_settings.json).
-    2. Live updating of the graph is disabled by default and can be toggled at any time. The update interval can also be
-       configured here.
-    3. A smoothed version of each graph can be displayed. This is toggled here and the rolling window size for
-       smoothness can be adjusted here as well.
-3. **Experiment Information**: Tabular information about the energy consumption the selected experiment.
-    1. This table contains information about the energy consumption, cost, and carbon footprint of the selected
-       experiment.
-4. **Energy Consumption Graph**: A live updating graph of energy consumption.
-    1. Two graphs are displayed: One for the energy consumption at specific time stamps (upper) and one for the total
-       energy consumption (lower).
+EMERS is released under the [MIT License](LICENSE).

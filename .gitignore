@@ -1,2 +1,11 @@
 .idea
 /video/*
+/.venv/
+/build/
+/dist/
+/*.egg-info/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+/settings.json
+.DS_Store

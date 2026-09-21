@@ -3,7 +3,7 @@ from datetime import datetime
 from tapo import ApiClient
 from tapo.requests import EnergyDataInterval
 
-from measurement_manager import MeasurementLogResult
+from emers.measurement import MeasurementLogResult
 
 
 async def get_data_tapo(**kwargs) -> MeasurementLogResult:

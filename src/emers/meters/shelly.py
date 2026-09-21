@@ -1,7 +1,7 @@
 from requests import post
 from time import time
 
-from measurement_manager import MeasurementLogResult
+from emers.measurement import MeasurementLogResult
 
 
 async def get_data_shelly(**kwargs) -> MeasurementLogResult:

@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[project]
+name = "emers"
+version = "0.1.0"
+description = "Measure, monitor, and report the energy consumption of recommender-system experiments."
+readme = "readme.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Intelligent Systems Group, University of Siegen" },
+]
+keywords = ["energy", "measurement", "recommender-systems", "smart-plug"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Framework :: Dash",
+  "Programming Language :: Python :: 3",
+]
+dependencies = [
+  "dash>=2.17",
+  "kaleido>=0.2.1",
+  "pandas>=2.2",
+  "plotly>=5.18",
+  "requests>=2.31",
+  "tapo>=0.3",
+]
+
+[project.scripts]
+emers = "emers.cli:main"
+
+[project.urls]
+Repository = "https://github.com/ISG-Siegen/emers"
+Issues = "https://github.com/ISG-Siegen/emers/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/emers"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/tests",
+  "/readme.md",
+  "/LICENSE",
+  "/pyproject.toml",
+  "/settings.example.json",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

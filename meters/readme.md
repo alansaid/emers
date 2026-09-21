@@ -1,1 +1,0 @@
-Smart plug sensor reading functions go here.

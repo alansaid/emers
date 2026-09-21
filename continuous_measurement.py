@@ -1,18 +1,6 @@
-import asyncio
 import argparse
 
-from measurement_manager import MeasurementManager
-
-
-async def main():
-    print(f"Running continuous measurement for {args.device_name} with "
-          f"polling rate {args.polling_rate} and log interval {args.log_interval}...")
-    manager = MeasurementManager(device_name=args.device_name, experiment_name="continuous",
-                                 polling_rate=args.polling_rate, log_interval=args.log_interval)
-    try:
-        await manager.log_data()
-    except KeyboardInterrupt:
-        print("Stopped continuous measurement with keyboard interrupt.")
+from emers.cli import main
 
 
 if __name__ == '__main__':
@@ -22,4 +10,9 @@ if __name__ == '__main__':
     parser.add_argument('--log_interval', type=int, required=False, default=300)
     args = parser.parse_args()
 
-    asyncio.run(main())
+    main([
+        "measure",
+        "--device", args.device_name,
+        "--polling-rate", str(args.polling_rate),
+        "--log-interval", str(args.log_interval),
+    ])
