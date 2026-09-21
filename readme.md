@@ -35,6 +35,18 @@ and `report/`. Existing configuration files are never overwritten. The default
 configuration includes a mock smart plug, so EMERS can be tried immediately:
 
 ```bash
+emers measure
+```
+
+EMERS lists the devices in `settings.json`. Choose one to begin measuring or
+select **Configure a new device** to add a Mock, Shelly, or Tapo plug. Tapo
+password input is hidden. The same menu can edit or remove a configured device;
+removal requires confirmation and historical measurements are retained. When
+editing a Tapo plug, leave the password blank to keep the existing one. To skip
+the interactive prompt, provide the saved device name directly. Renaming a
+device does not rename its historical measurement directory.
+
+```bash
 emers measure --device MockPlug
 ```
 
@@ -45,6 +57,17 @@ emers monitor
 ```
 
 Open <http://127.0.0.1:5000> in a browser.
+
+For the usual local workflow, run measurement and the dashboard together:
+
+```bash
+emers run
+```
+
+The selected plug is measured in the background while the web UI runs at
+<http://127.0.0.1:5000>. Press Ctrl+C to stop both. The separate `measure` and
+`monitor` commands remain useful when they have different lifecycles or share a
+workspace between processes.
 
 Use `--workspace` to keep data in another directory:
 

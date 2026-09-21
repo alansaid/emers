@@ -809,4 +809,6 @@ def update_graph(files, n_intervals, cost_per_kwh, currency, carbon_footprint, c
 
 def run(host="127.0.0.1", port=5000, debug=False):
     """Run the EMERS monitoring web application."""
-    app.run(debug=debug, host=host, port=port)
+    # The reloader starts a second process, which would duplicate a measurement
+    # worker when the dashboard is launched through ``emers run``.
+    app.run(debug=debug, host=host, port=port, use_reloader=False)
