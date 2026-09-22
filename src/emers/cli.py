@@ -1,13 +1,13 @@
 """Command-line interface for EMERS."""
 
 import argparse
-import asyncio
 import getpass
 import json
 import os
 from pathlib import Path
+from time import sleep
 
-from emers.measurement import MeasurementManager
+from emers.session import Run
 
 
 DEFAULT_DEVICES = {
@@ -27,6 +27,7 @@ DEVICE_TYPES = (
     ("mock", "Mock plug"),
     ("shelly", "Shelly Plug Plus S"),
     ("tapo", "TP-Link Tapo P115"),
+    ("codecarbon", "CodeCarbon software estimate"),
 )
 
 
@@ -81,6 +82,12 @@ def _prompt_confirmation(prompt):
         print("Please enter yes or no.")
 
 
+def _prompt_optional(label, default=None):
+    suffix = f" [{default}]" if default else " [optional]"
+    value = input(f"{label}{suffix}: ").strip()
+    return value or default or ""
+
+
 def _load_devices(config_path):
     try:
         devices = json.loads(config_path.read_text(encoding="utf-8"))
@@ -116,6 +123,17 @@ def _configure_device(devices, config_path):
     elif device_type == "tapo":
         device["tapo_user"] = _prompt_value("Tapo account username")
         device["tapo_password"] = _prompt_value("Tapo account password", secret=True)
+    elif device_type == "codecarbon":
+        device["tracking_mode"] = _prompt_choice(
+            "Tracking scope:",
+            (("machine", "Entire machine"), ("process", "Current process")),
+        )
+        device["measure_power_secs"] = float(
+            _prompt_value("Measurement interval in seconds", default="15")
+        )
+        country = _prompt_optional("Country ISO code (3 letters, e.g. SWE)")
+        if country:
+            device["country_iso_code"] = country.upper()
 
     devices[name] = device
     _save_devices(config_path, devices)
@@ -162,6 +180,25 @@ def _edit_device(name, devices, config_path):
             secret=True,
             hide_default=True,
         )
+    elif device_type == "codecarbon":
+        updated["tracking_mode"] = _prompt_choice(
+            "Tracking scope:",
+            (("machine", "Entire machine"), ("process", "Current process")),
+        )
+        updated["measure_power_secs"] = float(
+            _prompt_value(
+                "Measurement interval in seconds",
+                default=str(current.get("measure_power_secs", 15)),
+            )
+        )
+        country = _prompt_optional(
+            "Country ISO code (3 letters, e.g. SWE)",
+            default=current.get("country_iso_code"),
+        )
+        if country:
+            updated["country_iso_code"] = country.upper()
+        else:
+            updated.pop("country_iso_code", None)
 
     if new_name != name:
         del devices[name]
@@ -238,32 +275,60 @@ def init_workspace(workspace):
         print(f"Ready {path}")
 
 
-async def _measure(args, workspace):
-    manager = _measurement_manager(args, workspace)
-    print(
-        f"Running measurement for {args.device} with polling rate "
-        f"{args.polling_rate}s and log interval {args.log_interval}s."
-    )
-    try:
-        await manager.log_data()
-    except KeyboardInterrupt:
-        print("Stopped measurement.")
+def _run_options(args):
+    parameters = {}
+    for assignment in getattr(args, "param", []) or []:
+        if "=" not in assignment:
+            raise SystemExit(f"Invalid --param {assignment!r}; expected KEY=VALUE")
+        key, value = assignment.split("=", 1)
+        try:
+            parameters[key] = json.loads(value)
+        except json.JSONDecodeError:
+            parameters[key] = value
+    return {
+        "failure_policy": getattr(args, "failure_policy", "fallback"),
+        "fallback_device": getattr(args, "fallback_device", "codecarbon"),
+        "max_failures": getattr(args, "max_failures", 3),
+        "request_timeout": getattr(args, "request_timeout", 10.0),
+        "retry_backoff": getattr(args, "retry_backoff", 1.0),
+        "max_retry_backoff": getattr(args, "max_retry_backoff", 30.0),
+        "parameters": parameters,
+        "tags": getattr(args, "tag", []) or [],
+    }
 
 
-def _measurement_manager(args, workspace):
-    return MeasurementManager(
-        device_name=args.device,
-        experiment_name=args.experiment,
+def _experiment_run(args, workspace):
+    return Run(
+        args.experiment,
+        device=args.device,
         polling_rate=args.polling_rate,
         log_interval=args.log_interval,
         workspace=workspace,
         config=args.config,
+        **_run_options(args),
     )
+
+
+def _measure(args, workspace):
+    experiment_run = _experiment_run(args, workspace)
+    print(
+        f"Running measurement for {args.device} with polling rate "
+        f"{args.polling_rate}s and log interval {args.log_interval}s."
+    )
+    stopped = False
+    with experiment_run:
+        try:
+            while experiment_run.manager.is_running:
+                sleep(0.25)
+        except KeyboardInterrupt:
+            stopped = True
+    if stopped:
+        print("Stopped measurement.")
 
 
 def _run_combined(args, workspace, monitor_runner=None):
     """Run measurement in the background and the dashboard in the foreground."""
-    manager = _measurement_manager(args, workspace)
+    experiment_run = _experiment_run(args, workspace)
     measurement_dir = workspace / "measurements" / args.device / args.experiment
     measurement_dir.mkdir(parents=True, exist_ok=True)
 
@@ -275,8 +340,11 @@ def _run_combined(args, workspace, monitor_runner=None):
 
         print(f"Starting measurement for {args.device}.")
         print(f"Dashboard: http://{args.host}:{args.port}/")
-        with manager:
-            monitor_runner(host=args.host, port=args.port, debug=args.debug)
+        with experiment_run:
+            try:
+                monitor_runner(host=args.host, port=args.port, debug=args.debug)
+            except KeyboardInterrupt:
+                pass
     finally:
         os.chdir(previous_directory)
 
@@ -322,6 +390,54 @@ def build_parser():
         command_parser.add_argument(
             "--config", default="settings.json", help="Device configuration JSON file."
         )
+        command_parser.add_argument(
+            "--failure-policy",
+            choices=("fallback", "continue", "fail"),
+            default="fallback",
+            help=(
+                "On meter failure: use CodeCarbon, keep retrying with gaps, or fail "
+                "the run (default: fallback)."
+            ),
+        )
+        command_parser.add_argument(
+            "--fallback-device",
+            default="codecarbon",
+            help="Configured fallback device name, or 'codecarbon' (default).",
+        )
+        command_parser.add_argument(
+            "--max-failures",
+            type=int,
+            default=3,
+            help="Consecutive runtime failures before fallback/failure (default: 3).",
+        )
+        command_parser.add_argument(
+            "--request-timeout",
+            type=float,
+            default=10.0,
+            help="Seconds allowed for one meter request (default: 10).",
+        )
+        command_parser.add_argument(
+            "--retry-backoff",
+            type=float,
+            default=1.0,
+            help="Initial retry delay in seconds (default: 1).",
+        )
+        command_parser.add_argument(
+            "--max-retry-backoff",
+            type=float,
+            default=30.0,
+            help="Maximum retry delay in seconds (default: 30).",
+        )
+        command_parser.add_argument(
+            "--param",
+            action="append",
+            default=[],
+            metavar="KEY=VALUE",
+            help="Record an experiment parameter; repeatable.",
+        )
+        command_parser.add_argument(
+            "--tag", action="append", default=[], help="Attach a run tag; repeatable."
+        )
 
     measure = subparsers.add_parser("measure", help="Continuously record measurements.")
     add_measurement_options(measure)
@@ -359,7 +475,7 @@ def main(argv=None):
         if args.device is None:
             args.device = _select_or_configure_device(config_path)
         if args.command == "measure":
-            asyncio.run(_measure(args, workspace))
+            _measure(args, workspace)
         else:
             _require_files(workspace, ("monitor_settings.json",))
             _run_combined(args, workspace)

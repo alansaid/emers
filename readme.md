@@ -16,6 +16,13 @@ EMERS requires Python 3.10 or newer.
 python -m pip install emers
 ```
 
+Install the optional CodeCarbon provider when software estimates or automatic
+fallback are required:
+
+```bash
+python -m pip install "emers[codecarbon]"
+```
+
 For development from a clone:
 
 ```bash
@@ -39,7 +46,8 @@ emers measure
 ```
 
 EMERS lists the devices in `settings.json`. Choose one to begin measuring or
-select **Configure a new device** to add a Mock, Shelly, or Tapo plug. Tapo
+select **Configure a new device** to add a Mock, Shelly, Tapo, or CodeCarbon
+provider. Tapo
 password input is hidden. The same menu can edit or remove a configured device;
 removal requires confirmation and historical measurements are retained. When
 editing a Tapo plug, leave the password blank to keep the existing one. To skip
@@ -113,24 +121,98 @@ for a safe example.
 
 The plug and the computer running EMERS must be reachable on the same network.
 
+### CodeCarbon software estimates
+
+Choose the CodeCarbon device type when no physical meter is available and an
+estimate is preferable to the synthetic mock data. EMERS records these values
+as estimates of CPU, GPU, and RAM energy, so they are not presented as
+equivalent to whole-system wall-power readings. Supplying a three-letter
+country code such as `SWE` enables CodeCarbon's offline tracker and avoids a
+location lookup.
+
 ## Measuring from Python
 
-`MeasurementManager` is a context manager that records measurements while an
-experiment runs:
+The recommended Python API creates a structured run around the experiment:
 
 ```python
-from emers import MeasurementManager
+import emers
 
-with MeasurementManager(
-    device_name="shelly_meter",
-    experiment_name="model-training",
-):
-    model.fit(train_data)
+with emers.run(
+    "model-training",
+    device="shelly_meter",
+    parameters={"model": "BPR", "factors": 128},
+    tags=["baseline"],
+) as run:
+    with run.phase("training"):
+        model.fit(train_data)
+
+    with run.phase("evaluation"):
+        metrics = evaluate(model, test_data)
+        run.log_metrics(metrics)
 ```
 
-Its optional `workspace` argument selects the directory containing
-`settings.json` and receiving measurements. The default is the current working
-directory.
+Runs can also be applied as a decorator:
+
+```python
+from emers import track
+
+@track("model-training", device="shelly_meter")
+def train():
+    ...
+```
+
+The optional `workspace` argument selects the directory containing
+`settings.json` and receiving measurements. `MeasurementManager` remains
+available as the lower-level acquisition API.
+
+### Meter outages and fallback
+
+The default failure policy is `fallback`:
+
+1. EMERS probes the configured meter before entering the experiment block.
+2. If the plug is unavailable, EMERS tries CodeCarbon immediately.
+3. During a run, transient failures are retried with bounded exponential
+   backoff; after three consecutive failures EMERS switches to CodeCarbon.
+4. If CodeCarbon is unavailable, the experiment continues while EMERS records
+   explicit measurement gaps and keeps retrying the plug.
+
+Fallback is never silent. CSV rows include `source`, `measurement_method`, and
+`measurement_scope`; CodeCarbon rows are labelled `estimated` and
+`cpu_gpu_ram`, while smart-plug readings are labelled `measured` and
+`whole_system_wall`.
+
+Choose another policy in Python or on the CLI:
+
+```python
+with emers.run("strict-run", device="tapo_meter", failure_policy="fail"):
+    ...
+```
+
+```bash
+emers run --device tapo_meter --failure-policy continue
+emers run --device tapo_meter --failure-policy fail
+```
+
+- `continue` records gaps and retries the original provider without switching.
+- `fail` rejects an unavailable provider before the experiment starts. A
+  persistent failure during the experiment is raised when the context exits,
+  because Python cannot safely inject an exception into user code from the
+  measurement thread.
+
+### Run artifacts
+
+Every run receives a UUID and writes a manifest and append-only event log under:
+
+```text
+measurements/<device>/<experiment>/.emers/runs/<run-id>/
+├── run.json
+└── events.jsonl
+```
+
+The manifest records runtime and Git metadata, parameters, latest metrics,
+phases, measurement provenance, provider changes, errors, and final status.
+Device credentials are never copied into run artifacts. Measurement CSVs remain
+in the experiment directory and include the run UUID and provenance fields.
 
 ## Adding a meter integration
 

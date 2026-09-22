@@ -29,6 +29,10 @@ dependencies = [
   "tapo>=0.3",
 ]
 
+[project.optional-dependencies]
+codecarbon = ["codecarbon>=3.2"]
+all = ["codecarbon>=3.2"]
+
 [project.scripts]
 emers = "emers.cli:main"
 

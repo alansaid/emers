@@ -174,21 +174,10 @@ def test_edit_device_updates_fields_and_keeps_tapo_password(tmp_path, monkeypatc
 def test_run_combined_manages_measurement_and_monitor(tmp_path, monkeypatch):
     events = []
 
-    class FakeManager:
-        def __init__(self, **kwargs):
-            events.append(("configured", kwargs))
-
-        def __enter__(self):
-            events.append(("measurement", "started"))
-            return self
-
-        def __exit__(self, exc_type, exc_value, traceback):
-            events.append(("measurement", "stopped"))
-
     def fake_monitor(**kwargs):
         events.append(("monitor", kwargs))
 
-    monkeypatch.setattr("emers.cli.MeasurementManager", FakeManager)
+    init_workspace(tmp_path)
     args = Namespace(
         device="MockPlug",
         experiment="combined-test",
@@ -203,8 +192,13 @@ def test_run_combined_manages_measurement_and_monitor(tmp_path, monkeypatch):
     _run_combined(args, tmp_path, monitor_runner=fake_monitor)
 
     assert (tmp_path / "measurements" / "MockPlug" / "combined-test").is_dir()
-    assert events[1:] == [
-        ("measurement", "started"),
+    assert events == [
         ("monitor", {"host": "127.0.0.1", "port": 5000, "debug": False}),
-        ("measurement", "stopped"),
     ]
+    manifests = list(
+        (tmp_path / "measurements" / "MockPlug" / "combined-test" / ".emers" / "runs").glob(
+            "*/run.json"
+        )
+    )
+    assert len(manifests) == 1
+    assert json.loads(manifests[0].read_text())["status"] == "completed"

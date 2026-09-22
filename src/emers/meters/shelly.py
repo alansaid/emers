@@ -1,3 +1,5 @@
+import asyncio
+
 from requests import post
 from time import time
 
@@ -15,7 +17,13 @@ async def get_data_shelly(**kwargs) -> MeasurementLogResult:
                     f'"src":"{kwargs["device_id"]}", '
                     '"method":"Switch.GetStatus", '
                     '"params":{"id":0}}')
-    response = post(f"http://{kwargs['device_ip']}/rpc", headers=headers, data=request_data)
+    response = await asyncio.to_thread(
+        post,
+        f"http://{kwargs['device_ip']}/rpc",
+        headers=headers,
+        data=request_data,
+        timeout=kwargs.get("request_timeout", 10),
+    )
 
     if response.status_code != 200:
         raise Exception(f"API call failed. Status code: {response.status_code} \n Response: {response}")
