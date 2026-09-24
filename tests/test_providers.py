@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from emers.providers import CodeCarbonProvider, ProviderUnavailableError
+from emers.providers import CodeCarbonProvider, ProviderUnavailableError, build_provider
 
 
 class FakeTracker:
@@ -26,7 +26,7 @@ class FakeTracker:
 
 def test_codecarbon_provider_normalizes_interval_results():
     provider = CodeCarbonProvider(
-        {"device_type": "codecarbon", "measure_power_secs": 10},
+        {"provider": "codecarbon", "measure_power_secs": 10},
         polling_rate=0.5,
         tracker_factory=FakeTracker,
     )
@@ -49,7 +49,7 @@ def test_codecarbon_provider_normalizes_interval_results():
 def test_codecarbon_provider_passes_offline_country_configuration():
     provider = CodeCarbonProvider(
         {
-            "device_type": "codecarbon",
+            "provider": "codecarbon",
             "country_iso_code": "SWE",
             "tracking_mode": "process",
         },
@@ -66,7 +66,7 @@ def test_codecarbon_provider_passes_offline_country_configuration():
 
 def test_codecarbon_provider_explains_missing_extra(monkeypatch):
     provider = CodeCarbonProvider(
-        {"device_type": "codecarbon"}, polling_rate=0.5
+        {"provider": "codecarbon"}, polling_rate=0.5
     )
 
     real_import = __import__
@@ -80,3 +80,43 @@ def test_codecarbon_provider_explains_missing_extra(monkeypatch):
 
     with pytest.raises(ProviderUnavailableError, match=r"emers\[codecarbon\]"):
         asyncio.run(provider.start())
+
+
+def test_build_provider_accepts_legacy_device_type():
+    provider = build_provider(
+        {"device_type": "mock"}, timeout=1, polling_rate=0.5
+    )
+
+    assert provider.provider_type == "mock"
+
+
+def test_build_provider_loads_entry_point_plugin(monkeypatch):
+    class PluginProvider:
+        source = "external"
+        method = "estimated"
+        scope = "custom"
+        polling_interval = 1
+
+        async def start(self):
+            return None
+
+        async def read(self):
+            return None
+
+        async def stop(self):
+            return None
+
+    class EntryPoint:
+        @staticmethod
+        def load():
+            return lambda **kwargs: PluginProvider()
+
+    monkeypatch.setattr(
+        "emers.providers.entry_points", lambda **kwargs: [EntryPoint()]
+    )
+
+    provider = build_provider(
+        {"provider": "external"}, timeout=1, polling_rate=1
+    )
+
+    assert provider.source == "external"

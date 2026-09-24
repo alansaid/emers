@@ -13,8 +13,8 @@ Path("./measurements").mkdir(exist_ok=True)
 app = Dash()
 app.title = "EMERS: Energy Meter for Recommender Systems"
 
-plug_options = [{"label": item.name, "value": str(item)} for
-                item in Path("./measurements/").iterdir() if item.is_dir()]
+source_options = [{"label": item.name, "value": str(item)} for
+                  item in Path("./measurements/").iterdir() if item.is_dir()]
 
 with open("monitor_settings.json", "r") as monitor_settings_file:
     monitor_settings = json.load(monitor_settings_file)
@@ -133,14 +133,14 @@ app.layout = [
                                 style=row_content_div_style,
                                 children=[
                                     html.Label(
-                                        children='Smart Plug:',
-                                        title='Select a smart plug',
+                                        children='Measurement source:',
+                                        title='Select a measurement source',
                                         htmlFor='plug_dropdown',
                                         style=label_style
                                     ),
                                     dcc.Dropdown(
-                                        options=plug_options,
-                                        value=plug_options[0]["value"] if plug_options else None,
+                                        options=source_options,
+                                        value=source_options[0]["value"] if source_options else None,
                                         id='plug_dropdown',
                                         style=dropdown_style,
                                         clearable=False
@@ -456,9 +456,9 @@ def read_file(item):
 def export_all_experiments(n_clicks, cost_per_kwh, currency, carbon_footprint, carbon_footprint_km, smoothness):
     if n_clicks > 0:
         full_data = {}
-        for plug_folder in Path("./measurements").iterdir():
-            if plug_folder.is_dir():
-                for experiment_folder in Path(plug_folder).iterdir():
+        for source_folder in Path("./measurements").iterdir():
+            if source_folder.is_dir():
+                for experiment_folder in Path(source_folder).iterdir():
                     if experiment_folder.is_dir():
                         with ThreadPoolExecutor() as executor:
                             full_data[experiment_folder] = pd.concat(
@@ -577,10 +577,10 @@ def update_interval(value):
     Output(component_id='experiment_dropdown', component_property='value'),
     Input(component_id='plug_dropdown', component_property='value')
 )
-def update_experiment_dropdown(plug):
-    if not plug:
+def update_experiment_dropdown(source):
+    if not source:
         return [], None
-    options = [{"label": item.name, "value": str(item)} for item in Path(plug).iterdir() if item.is_dir()]
+    options = [{"label": item.name, "value": str(item)} for item in Path(source).iterdir() if item.is_dir()]
     if len(options) == 0:
         return [], None
     value = options[0]['value']
@@ -659,34 +659,79 @@ def make_scatters(full_data, smoothness, autosize=False):
     scatters = []
 
     power_by_experiment = {}
-    total_power = 0
+    total_power = 0.0
 
     for experiment, readings in full_data.items():
         if "timestamp" not in readings.columns:
             continue
         readings.sort_values(by="timestamp", inplace=True)
-        readings["timestamp"] = readings["timestamp"] - readings["timestamp"].iloc[0]
+        experiment_start = readings["timestamp"].iloc[0]
+        if "segment_id" not in readings.columns:
+            readings["segment_id"] = "legacy"
+        else:
+            readings["segment_id"] = readings["segment_id"].fillna("legacy")
+        scopes = set()
+        segment_energy = []
 
-        readings["current_draw_smooth"] = readings["current_draw"].rolling(window=smoothness).mean()
-        readings["total_draw"] = readings["total_draw"] - readings["total_draw"].min()
+        for segment_id, segment in readings.groupby("segment_id", sort=False):
+            segment = segment.copy()
+            segment["timestamp"] = segment["timestamp"] - experiment_start
+            segment["current_draw_smooth"] = segment["current_draw"].rolling(
+                window=smoothness
+            ).mean()
+            segment["total_draw"] = (
+                segment["total_draw"] - segment["total_draw"].min()
+            )
+            segment["total_draw_smooth"] = segment["total_draw"].rolling(
+                window=smoothness
+            ).mean()
+            scope_value = (
+                segment["measurement_scope"].iloc[0]
+                if "measurement_scope" in segment.columns
+                else None
+            )
+            scope = str(scope_value) if pd.notna(scope_value) else "legacy"
+            provider_value = (
+                segment["provider"].iloc[0]
+                if "provider" in segment.columns
+                else None
+            )
+            if pd.isna(provider_value):
+                provider_value = (
+                    segment["source"].iloc[0]
+                    if "source" in segment.columns
+                    else None
+                )
+            provider = str(provider_value) if pd.notna(provider_value) else "legacy"
+            scopes.add(scope)
+            segment_energy.append(float(segment["total_draw"].max()))
+            label = f"{experiment} · {provider}/{scope} · {segment_id}"
+            scatters.append({
+                "experiment": experiment,
+                "cd": go.Scatter(
+                    x=segment["timestamp"], y=segment["current_draw"], name=label
+                ),
+                "cds": go.Scatter(
+                    x=segment["timestamp"],
+                    y=segment["current_draw_smooth"],
+                    name=f"Smoothed · {label}",
+                ),
+                "td": go.Scatter(
+                    x=segment["timestamp"], y=segment["total_draw"], name=label
+                ),
+                "tds": go.Scatter(
+                    x=segment["timestamp"],
+                    y=segment["total_draw_smooth"],
+                    name=f"Smoothed · {label}",
+                ),
+            })
 
-        power_by_experiment[experiment] = readings["total_draw"].max()
-        total_power += readings["total_draw"].max()
-
-        readings["total_draw_smooth"] = readings["total_draw"].rolling(window=smoothness).mean()
-
-        scatter_temp = {
-            "experiment": experiment,
-            "cd": (go.Scatter(x=readings["timestamp"], y=readings["current_draw"],
-                              name=f'Raw Sensor Reading ({experiment})')),
-            "cds": (go.Scatter(x=readings["timestamp"], y=readings["current_draw_smooth"],
-                               name=f'Smoothed Sensor Reading ({experiment})')),
-            "td": (go.Scatter(x=readings["timestamp"], y=readings["total_draw"],
-                              name=f'Raw Sensor Reading ({experiment})')),
-            "tds": (go.Scatter(x=readings["timestamp"], y=readings["total_draw_smooth"],
-                               name=f'Smoothed Sensor Reading ({experiment})'))}
-
-        scatters.append(scatter_temp)
+        energy = sum(segment_energy) if len(scopes) <= 1 else None
+        power_by_experiment[experiment] = energy
+        if energy is None:
+            total_power = None
+        elif total_power is not None:
+            total_power += energy
 
     scatters_layout = {}
 
@@ -721,6 +766,14 @@ def make_scatters(full_data, smoothness, autosize=False):
 
 
 def calculate_cost(power, cost_per_kwh, currency, carbon_footprint, carbon_footprint_km):
+    if power is None:
+        unavailable = "N/A (mixed measurement scopes)"
+        return {
+            "Total Energy Consumption (kWh)": unavailable,
+            f"Cost of Experiment ({currency})": unavailable,
+            "Carbon Footprint of Experiment (gCO2e)": unavailable,
+            "Equivalent Distance by Car (km)": unavailable,
+        }
     cost_of_experiment = power * float(cost_per_kwh)
     emission_of_experiment = power * float(carbon_footprint)
     equivalent_by_car = float(emission_of_experiment) / float(carbon_footprint_km)

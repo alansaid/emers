@@ -10,11 +10,12 @@ from time import sleep
 from emers.session import Run
 
 
-DEFAULT_DEVICES = {
+DEFAULT_SOURCES = {
     "MockPlug": {
-        "device_type": "mock"
+        "provider": "mock"
     }
 }
+DEFAULT_DEVICES = DEFAULT_SOURCES
 
 DEFAULT_MONITOR_SETTINGS = {
     "cost_per_kwh": 0.3,
@@ -23,11 +24,12 @@ DEFAULT_MONITOR_SETTINGS = {
     "gco2e_per_kilometer_car": 108.1,
 }
 
-DEVICE_TYPES = (
+PROVIDER_TYPES = (
     ("mock", "Mock plug"),
     ("shelly", "Shelly Plug Plus S"),
     ("tapo", "TP-Link Tapo P115"),
     ("codecarbon", "CodeCarbon software estimate"),
+    ("zeus", "Zeus hardware counters"),
 )
 
 
@@ -88,6 +90,15 @@ def _prompt_optional(label, default=None):
     return value or default or ""
 
 
+def _parse_indices(value):
+    if not value:
+        return None
+    try:
+        return [int(item.strip()) for item in value.split(",") if item.strip()]
+    except ValueError as exc:
+        raise ValueError("Indices must be comma-separated integers") from exc
+
+
 def _load_devices(config_path):
     try:
         devices = json.loads(config_path.read_text(encoding="utf-8"))
@@ -104,18 +115,18 @@ def _save_devices(config_path, devices):
 
 
 def _configure_device(devices, config_path):
-    print("\nConfigure a new device")
+    print("\nConfigure a new measurement source")
     while True:
-        name = _prompt_value("Device name")
+        name = _prompt_value("Source name")
         if name in {".", ".."} or "/" in name or "\\" in name:
-            print("Device name cannot be a path.")
+            print("Source name cannot be a path.")
         elif name in devices:
-            print(f"A device named {name!r} already exists.")
+            print(f"A source named {name!r} already exists.")
         else:
             break
 
-    device_type = _prompt_choice("Device type:", DEVICE_TYPES)
-    device = {"device_type": device_type}
+    device_type = _prompt_choice("Provider type:", PROVIDER_TYPES)
+    device = {"provider": device_type}
     if device_type in {"shelly", "tapo"}:
         device["device_ip"] = _prompt_value("Device IP address")
     if device_type == "shelly":
@@ -134,6 +145,20 @@ def _configure_device(devices, config_path):
         country = _prompt_optional("Country ISO code (3 letters, e.g. SWE)")
         if country:
             device["country_iso_code"] = country.upper()
+    elif device_type == "zeus":
+        device["measure_power_secs"] = float(
+            _prompt_value("Measurement interval in seconds", default="1")
+        )
+        gpu_indices = _parse_indices(
+            _prompt_optional("GPU indices (comma-separated; blank means all)")
+        )
+        cpu_indices = _parse_indices(
+            _prompt_optional("CPU package indices (comma-separated; blank means all)")
+        )
+        if gpu_indices is not None:
+            device["gpu_indices"] = gpu_indices
+        if cpu_indices is not None:
+            device["cpu_indices"] = cpu_indices
 
     devices[name] = device
     _save_devices(config_path, devices)
@@ -143,25 +168,27 @@ def _configure_device(devices, config_path):
 
 def _valid_device_name(name, devices, current_name=None):
     if name in {".", ".."} or "/" in name or "\\" in name:
-        print("Device name cannot be a path.")
+        print("Source name cannot be a path.")
         return False
     if name != current_name and name in devices:
-        print(f"A device named {name!r} already exists.")
+        print(f"A source named {name!r} already exists.")
         return False
     return True
 
 
 def _edit_device(name, devices, config_path):
     current = devices[name]
-    device_type = current.get("device_type")
+    device_type = current.get("provider") or current.get("device_type")
     print(f"\nEdit {name!r} ({device_type or 'unknown type'})")
 
     while True:
-        new_name = _prompt_value("Device name", default=name)
+        new_name = _prompt_value("Source name", default=name)
         if _valid_device_name(new_name, devices, current_name=name):
             break
 
     updated = dict(current)
+    updated["provider"] = device_type
+    updated.pop("device_type", None)
     if device_type in {"shelly", "tapo"}:
         updated["device_ip"] = _prompt_value(
             "Device IP address", default=current.get("device_ip")
@@ -199,6 +226,31 @@ def _edit_device(name, devices, config_path):
             updated["country_iso_code"] = country.upper()
         else:
             updated.pop("country_iso_code", None)
+    elif device_type == "zeus":
+        updated["measure_power_secs"] = float(
+            _prompt_value(
+                "Measurement interval in seconds",
+                default=str(current.get("measure_power_secs", 1)),
+            )
+        )
+        gpu_default = ",".join(map(str, current.get("gpu_indices", [])))
+        cpu_default = ",".join(map(str, current.get("cpu_indices", [])))
+        gpu_indices = _parse_indices(
+            _prompt_optional("GPU indices (comma-separated; blank means all)", gpu_default)
+        )
+        cpu_indices = _parse_indices(
+            _prompt_optional(
+                "CPU package indices (comma-separated; blank means all)", cpu_default
+            )
+        )
+        if gpu_indices is None:
+            updated.pop("gpu_indices", None)
+        else:
+            updated["gpu_indices"] = gpu_indices
+        if cpu_indices is None:
+            updated.pop("cpu_indices", None)
+        else:
+            updated["cpu_indices"] = cpu_indices
 
     if new_name != name:
         del devices[name]
@@ -214,9 +266,9 @@ def _remove_device(devices, config_path, name=None):
     if name is None:
         choices = [(device_name, device_name) for device_name in devices]
         choices.append((None, "Cancel"))
-        name = _prompt_choice("Select a device to remove:", choices)
+        name = _prompt_choice("Select a source to remove:", choices)
     if name is None or not _prompt_confirmation(f"Remove {name!r} from {config_path.name}?"):
-        print("No device removed.")
+        print("No source removed.")
         return False
 
     del devices[name]
@@ -229,13 +281,13 @@ def _remove_device(devices, config_path, name=None):
 def _edit_or_remove_device(devices, config_path):
     choices = [(name, name) for name in devices]
     choices.append((None, "Cancel"))
-    name = _prompt_choice("Select a device:", choices)
+    name = _prompt_choice("Select a source:", choices)
     if name is None:
         return
 
     action = _prompt_choice(
         f"What would you like to do with {name!r}?",
-        (("edit", "Edit device"), ("remove", "Remove device"), ("cancel", "Cancel")),
+        (("edit", "Edit source"), ("remove", "Remove source"), ("cancel", "Cancel")),
     )
     if action == "edit":
         _edit_device(name, devices, config_path)
@@ -248,16 +300,18 @@ def _select_or_configure_device(config_path):
     while True:
         choices = []
         for name, settings in devices.items():
-            description = settings.get("device_type", "unknown type")
+            description = settings.get("provider") or settings.get(
+                "device_type", "unknown provider"
+            )
             if settings.get("device_ip"):
                 description += f", {settings['device_ip']}"
-            choices.append((("device", name), f"{name} ({description})"))
-        choices.append((("configure", None), "Configure a new device"))
+            choices.append((("source", name), f"{name} ({description})"))
+        choices.append((("configure", None), "Configure a new source"))
         if devices:
-            choices.append((("manage", None), "Edit or remove a configured device"))
+            choices.append((("manage", None), "Edit or remove a configured source"))
 
-        action, name = _prompt_choice("Select a device to measure:", choices)
-        if action == "device":
+        action, name = _prompt_choice("Select a measurement source:", choices)
+        if action == "source":
             return name
         if action == "configure":
             return _configure_device(devices, config_path)
@@ -267,7 +321,7 @@ def _select_or_configure_device(config_path):
 def init_workspace(workspace):
     """Create a ready-to-run EMERS workspace without overwriting files."""
     workspace.mkdir(parents=True, exist_ok=True)
-    _write_json_if_missing(workspace / "settings.json", DEFAULT_DEVICES)
+    _write_json_if_missing(workspace / "settings.json", DEFAULT_SOURCES)
     _write_json_if_missing(workspace / "monitor_settings.json", DEFAULT_MONITOR_SETTINGS)
     for directory in ("measurements", "report"):
         path = workspace / directory
@@ -287,20 +341,26 @@ def _run_options(args):
             parameters[key] = value
     return {
         "failure_policy": getattr(args, "failure_policy", "fallback"),
-        "fallback_device": getattr(args, "fallback_device", "codecarbon"),
+        "fallbacks": getattr(args, "fallback_sources", None),
         "max_failures": getattr(args, "max_failures", 3),
         "request_timeout": getattr(args, "request_timeout", 10.0),
         "retry_backoff": getattr(args, "retry_backoff", 1.0),
         "max_retry_backoff": getattr(args, "max_retry_backoff", 30.0),
         "parameters": parameters,
         "tags": getattr(args, "tag", []) or [],
+        "benchmark_release": getattr(args, "benchmark_release", None),
     }
+
+
+def _selected_source(args):
+    """Return the canonical CLI source, accepting old programmatic namespaces."""
+    return getattr(args, "source", None) or getattr(args, "device", None)
 
 
 def _experiment_run(args, workspace):
     return Run(
         args.experiment,
-        device=args.device,
+        source=_selected_source(args),
         polling_rate=args.polling_rate,
         log_interval=args.log_interval,
         workspace=workspace,
@@ -311,8 +371,9 @@ def _experiment_run(args, workspace):
 
 def _measure(args, workspace):
     experiment_run = _experiment_run(args, workspace)
+    source = _selected_source(args)
     print(
-        f"Running measurement for {args.device} with polling rate "
+        f"Running measurement for {source} with polling rate "
         f"{args.polling_rate}s and log interval {args.log_interval}s."
     )
     stopped = False
@@ -329,7 +390,8 @@ def _measure(args, workspace):
 def _run_combined(args, workspace, monitor_runner=None):
     """Run measurement in the background and the dashboard in the foreground."""
     experiment_run = _experiment_run(args, workspace)
-    measurement_dir = workspace / "measurements" / args.device / args.experiment
+    source = _selected_source(args)
+    measurement_dir = workspace / "measurements" / source / args.experiment
     measurement_dir.mkdir(parents=True, exist_ok=True)
 
     previous_directory = Path.cwd()
@@ -338,7 +400,7 @@ def _run_combined(args, workspace, monitor_runner=None):
         if monitor_runner is None:
             from emers.monitor import run as monitor_runner
 
-        print(f"Starting measurement for {args.device}.")
+        print(f"Starting measurement for {source}.")
         print(f"Dashboard: http://{args.host}:{args.port}/")
         with experiment_run:
             try:
@@ -373,10 +435,30 @@ def build_parser():
 
     subparsers.add_parser("init", help="Initialize an EMERS workspace.")
 
+    validate = subparsers.add_parser(
+        "validate", help="Validate manifests, events, and measurement CSV files."
+    )
+    validate.add_argument(
+        "--run", type=Path, help="Validate one run directory or run.json file."
+    )
+    validate.add_argument(
+        "--strict-benchmark",
+        action="store_true",
+        help="Require an immutable benchmark release and clean provenance.",
+    )
+    validate.add_argument(
+        "--pretty", action="store_true", help="Pretty-print the JSON result."
+    )
+
     def add_measurement_options(command_parser):
         command_parser.add_argument(
+            "--source",
             "--device",
-            help="Device name from settings.json. If omitted, choose or configure one interactively.",
+            dest="source",
+            help=(
+                "Measurement source name from settings.json. If omitted, choose or "
+                "configure one interactively. --device is a compatibility alias."
+            ),
         )
         command_parser.add_argument(
             "--experiment", default="continuous", help="Experiment output directory name."
@@ -388,21 +470,28 @@ def build_parser():
             "--log-interval", type=int, default=300, help="Seconds between log rotations."
         )
         command_parser.add_argument(
-            "--config", default="settings.json", help="Device configuration JSON file."
+            "--config", default="settings.json", help="Source configuration JSON file."
         )
         command_parser.add_argument(
             "--failure-policy",
             choices=("fallback", "continue", "fail"),
             default="fallback",
             help=(
-                "On meter failure: use CodeCarbon, keep retrying with gaps, or fail "
-                "the run (default: fallback)."
+                "On provider failure: try configured fallbacks, keep retrying with "
+                "gaps, or fail the run (default: fallback)."
             ),
         )
         command_parser.add_argument(
+            "--fallback-source",
             "--fallback-device",
-            default="codecarbon",
-            help="Configured fallback device name, or 'codecarbon' (default).",
+            dest="fallback_sources",
+            action="append",
+            default=None,
+            help=(
+                "Ordered fallback source or provider name; repeat for a chain. "
+                "Defaults to the source configuration, then CodeCarbon. "
+                "--fallback-device is a compatibility alias."
+            ),
         )
         command_parser.add_argument(
             "--max-failures",
@@ -414,7 +503,7 @@ def build_parser():
             "--request-timeout",
             type=float,
             default=10.0,
-            help="Seconds allowed for one meter request (default: 10).",
+            help="Seconds allowed for one provider request (default: 10).",
         )
         command_parser.add_argument(
             "--retry-backoff",
@@ -437,6 +526,10 @@ def build_parser():
         )
         command_parser.add_argument(
             "--tag", action="append", default=[], help="Attach a run tag; repeatable."
+        )
+        command_parser.add_argument(
+            "--benchmark-release",
+            help="Record the immutable benchmark release or dataset version.",
         )
 
     measure = subparsers.add_parser("measure", help="Continuously record measurements.")
@@ -463,6 +556,17 @@ def main(argv=None):
         init_workspace(workspace)
         return
 
+    if args.command == "validate":
+        from emers.validation import validate_workspace
+
+        report = validate_workspace(
+            workspace,
+            run=args.run,
+            strict_benchmark=args.strict_benchmark,
+        )
+        print(json.dumps(report, indent=2 if args.pretty else None, sort_keys=True))
+        return 0 if report["valid"] else 1
+
     if args.command in {"measure", "run"}:
         config_path = Path(args.config).expanduser()
         if not config_path.is_absolute():
@@ -472,8 +576,8 @@ def main(argv=None):
                 f"Missing configuration {config_path}. "
                 f"Run 'emers --workspace {workspace} init' first."
             )
-        if args.device is None:
-            args.device = _select_or_configure_device(config_path)
+        if args.source is None:
+            args.source = _select_or_configure_device(config_path)
         if args.command == "measure":
             _measure(args, workspace)
         else:

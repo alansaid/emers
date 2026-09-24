@@ -1,1 +1,1 @@
-"""Built-in smart-plug integrations."""
+"""Compatibility namespace for integrations moved to :mod:`emers.providers`."""

@@ -9,7 +9,7 @@ def test_run_records_metadata_parameters_metrics_and_phases(tmp_path):
 
     with Run(
         "training",
-        device="MockPlug",
+        source="MockPlug",
         workspace=tmp_path,
         polling_rate=0.001,
         parameters={"model": "BPR"},
@@ -28,3 +28,11 @@ def test_run_records_metadata_parameters_metrics_and_phases(tmp_path):
     assert manifest["phases"][0]["name"] == "fit"
     assert manifest["phases"][0]["status"] == "completed"
     assert manifest["measurement"]["method"] == "synthetic"
+    assert manifest["source"] == "MockPlug"
+
+
+def test_run_accepts_legacy_device_alias(tmp_path):
+    init_workspace(tmp_path)
+
+    with Run("legacy", device="MockPlug", workspace=tmp_path, polling_rate=0.001):
+        pass

@@ -2,7 +2,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from emers.meters.tapo import _energy_kwh
+from emers.providers.tapo import _energy_kwh
+from emers.meters.tapo import _energy_kwh as legacy_energy_kwh
+
+
+def test_legacy_meter_module_reexports_provider():
+    assert legacy_energy_kwh is _energy_kwh
 
 
 def test_energy_kwh_from_current_tapo_response():

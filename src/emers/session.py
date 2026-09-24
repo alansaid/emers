@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import functools
+import hashlib
+import importlib.metadata
 import platform
 import socket
 import subprocess
@@ -61,6 +63,32 @@ def _git_metadata(workspace):
     }
 
 
+def _environment_metadata():
+    packages = sorted({
+        f"{distribution.metadata.get('Name', 'unknown')}=={distribution.version}"
+        for distribution in importlib.metadata.distributions()
+    }, key=str.casefold)
+    payload = "\n".join(packages).encode("utf-8")
+    return {
+        "packages": packages,
+        "package_count": len(packages),
+        "packages_sha256": hashlib.sha256(payload).hexdigest(),
+        "python_implementation": platform.python_implementation(),
+        "python_version": platform.python_version(),
+    }
+
+
+def _package_code_hash():
+    package_root = Path(__file__).resolve().parent
+    digest = hashlib.sha256()
+    for path in sorted(package_root.rglob("*.py")):
+        digest.update(str(path.relative_to(package_root)).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
 class Run:
     """An instrumented experiment run.
 
@@ -73,13 +101,16 @@ class Run:
         self,
         name,
         *,
-        device,
+        source=None,
+        device=None,
         workspace=None,
         config=None,
         polling_rate=0.5,
         log_interval=300,
         failure_policy="fallback",
-        fallback_device="codecarbon",
+        fallback_source=None,
+        fallback_device=None,
+        fallbacks=None,
         max_failures=3,
         request_timeout=10.0,
         retry_backoff=1.0,
@@ -87,9 +118,15 @@ class Run:
         metadata=None,
         parameters=None,
         tags=None,
+        benchmark_release=None,
         _tracker_factory=None,
     ):
         self.name = name
+        if source is not None and device is not None and source != device:
+            raise ValueError("source and legacy device refer to different sources")
+        self.source = source if source is not None else device
+        if self.source is None:
+            raise TypeError("source is required")
         self.workspace = Path(workspace or ".").expanduser().resolve()
         self._entered = False
         self._started_at = None
@@ -99,7 +136,14 @@ class Run:
             "platform": platform.platform(),
             "python": sys.version.split()[0],
             "executable": sys.executable,
+            "environment": _environment_metadata(),
+            "emers_code_sha256": _package_code_hash(),
         }
+        emers_git = _git_metadata(Path(__file__).resolve().parents[2])
+        if emers_git:
+            runtime_metadata["emers_git"] = emers_git
+        if benchmark_release:
+            runtime_metadata["benchmark_release"] = str(benchmark_release)
         git = _git_metadata(self.workspace)
         if git:
             runtime_metadata["git"] = git
@@ -107,14 +151,16 @@ class Run:
             runtime_metadata.update(_json_safe(metadata))
 
         self.manager = MeasurementManager(
-            device_name=device,
+            source_name=self.source,
             experiment_name=name,
             polling_rate=polling_rate,
             log_interval=log_interval,
             workspace=self.workspace,
             config=config,
             failure_policy=failure_policy,
+            fallback_source=fallback_source,
             fallback_device=fallback_device,
+            fallbacks=fallbacks,
             max_failures=max_failures,
             request_timeout=request_timeout,
             retry_backoff=retry_backoff,

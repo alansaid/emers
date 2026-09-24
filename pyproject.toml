@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "emers"
 version = "0.1.0"
-description = "Measure, monitor, and report the energy consumption of recommender-system experiments."
+description = "Measure, monitor, and report the energy consumption of computational experiments."
 readme = "readme.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -13,7 +13,7 @@ license-files = ["LICENSE"]
 authors = [
   { name = "Intelligent Systems Group, University of Siegen" },
 ]
-keywords = ["energy", "measurement", "recommender-systems", "smart-plug"]
+keywords = ["energy", "measurement", "experiments", "smart-plug", "codecarbon", "zeus"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
@@ -31,7 +31,8 @@ dependencies = [
 
 [project.optional-dependencies]
 codecarbon = ["codecarbon>=3.2"]
-all = ["codecarbon>=3.2"]
+zeus = ["zeus>=0.11"]
+all = ["codecarbon>=3.2", "zeus>=0.11"]
 
 [project.scripts]
 emers = "emers.cli:main"

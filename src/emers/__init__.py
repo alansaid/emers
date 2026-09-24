@@ -1,4 +1,4 @@
-"""Energy measurement tools for recommender-system experiments."""
+"""Energy measurement tools for computational experiments."""
 
 from emers.measurement import (
     MeasurementLogResult,

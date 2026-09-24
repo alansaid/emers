@@ -8,6 +8,7 @@ from emers.cli import (
     _remove_device,
     _run_combined,
     _select_or_configure_device,
+    build_parser,
     init_workspace,
     main,
 )
@@ -37,8 +38,31 @@ def test_manager_loads_configuration_from_workspace(tmp_path):
 
     manager = MeasurementManager("MockPlug", workspace=tmp_path)
 
-    assert manager.device == {"device_type": "mock"}
+    assert manager.source_settings == {"provider": "mock"}
+    assert manager.device == manager.source_settings
     assert manager.workspace == tmp_path.resolve()
+
+
+def test_manager_uses_ordered_fallbacks_from_source_configuration(tmp_path):
+    init_workspace(tmp_path)
+    settings = {
+        "primary": {
+            "provider": "mock",
+            "fallbacks": [
+                {"provider": "zeus", "gpu_indices": [0]},
+                "codecarbon",
+            ],
+        }
+    }
+    (tmp_path / "settings.json").write_text(json.dumps(settings))
+
+    manager = MeasurementManager("primary", workspace=tmp_path)
+
+    assert manager.fallbacks == settings["primary"]["fallbacks"]
+    assert manager.manifest["measurement"]["fallback_chain"] == [
+        {"provider": "zeus"},
+        {"provider": "codecarbon"},
+    ]
 
 
 def test_mock_manager_writes_measurements(tmp_path):
@@ -77,6 +101,19 @@ def test_measure_accepts_custom_config_without_monitor_settings(tmp_path, monkey
     ])
 
 
+def test_source_and_legacy_device_options_share_destination():
+    parser = build_parser()
+
+    assert parser.parse_args(["measure", "--source", "new"]).source == "new"
+    assert parser.parse_args(["measure", "--device", "old"]).source == "old"
+    assert (
+        parser.parse_args(
+            ["measure", "--source", "main", "--fallback-device", "backup"]
+        ).fallback_sources
+        == ["backup"]
+    )
+
+
 def test_interactive_measure_selects_existing_device(tmp_path, monkeypatch):
     init_workspace(tmp_path)
     monkeypatch.setattr("builtins.input", lambda _: "1")
@@ -103,7 +140,7 @@ def test_interactive_measure_configures_and_saves_tapo_device(tmp_path, monkeypa
     assert selected == "office_plug"
     devices = json.loads((tmp_path / "settings.json").read_text())
     assert devices["office_plug"] == {
-        "device_type": "tapo",
+        "provider": "tapo",
         "device_ip": "192.168.1.42",
         "tapo_user": "user@example.com",
         "tapo_password": "secret",
@@ -164,7 +201,7 @@ def test_edit_device_updates_fields_and_keeps_tapo_password(tmp_path, monkeypatc
     saved = json.loads(config.read_text())
     assert "old_name" not in saved
     assert saved["new_name"] == {
-        "device_type": "tapo",
+        "provider": "tapo",
         "device_ip": "192.168.1.20",
         "tapo_user": "new@example.com",
         "tapo_password": "existing-secret",
