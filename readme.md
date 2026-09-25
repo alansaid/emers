@@ -79,8 +79,10 @@ emers measure --source MockPlug
 Press Ctrl+C to stop. Start the dashboard separately with:
 
 ```bash
-emers monitor
+emers dashboard
 ```
+
+`emers monitor` remains available as a compatibility alias.
 
 For the usual local workflow, start measurement and the dashboard together:
 
@@ -90,6 +92,31 @@ emers run --source MockPlug
 
 The dashboard is available at <http://127.0.0.1:5000>. Press Ctrl+C to stop
 both services cleanly.
+
+The dashboard selects recorded runs rather than raw CSV files. For each run it
+shows lifecycle and coverage information, energy and impact estimates,
+provider segments, measurement gaps, validation errors and warnings, and
+segment-aware power and energy plots. It refreshes while a run is active.
+CSV-only experiments created by older EMERS versions remain available under
+the collapsible legacy section.
+
+Generate a self-contained HTML report for the latest run:
+
+```bash
+emers report
+```
+
+Select a run by its full ID, a unique ID prefix, its run directory, or its
+`run.json` path. Generate one report per run with `--all`:
+
+```bash
+emers report --run 83b4b6e2
+emers report --all --output published-reports
+```
+
+Reports default to `report/<run-id>/report.html`. Cost and carbon assumptions
+come from `monitor_settings.json` and can be overridden with options such as
+`--cost-per-kwh`, `--currency`, and `--gco2e-per-kwh`.
 
 Use a different workspace when required:
 
@@ -349,6 +376,30 @@ def train():
 The optional `workspace` argument selects the directory containing
 `settings.json` and receiving measurements. `MeasurementManager` remains
 available as the lower-level acquisition API.
+
+The dashboard also has an application factory for embedding or custom server
+integration. It does not change the process working directory:
+
+```python
+from emers.dashboard import create_dashboard
+
+dashboard = create_dashboard("path/to/experiment")
+server = dashboard.server  # Flask WSGI application
+```
+
+`create_app` is an alias for `create_dashboard`. Multiple dashboard instances
+can be created in one process and remain bound to their own workspaces.
+Each dashboard keeps a workspace-local `RunStore`: unchanged manifests and
+measurement chunks are reused, while live CSV files are read from their last
+complete row when new samples arrive. Replaced or truncated artifacts are
+detected and loaded again in full.
+
+The dashboard remains a Dash application: its small callback graph and
+two-second local polling model fit the framework without requiring a separate
+JavaScript frontend or ASGI service. The canonical implementation lives under
+`emers.dashboard`; `emers.monitor` is retained only as a compatibility facade.
+Read-only result tables use semantic HTML rather than the deprecated Dash
+DataTable component.
 
 ## Provenance, segments, and artifacts
 

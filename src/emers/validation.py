@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+from math import isnan
 from collections import defaultdict
 from pathlib import Path
 
@@ -40,8 +41,13 @@ def _issue(collection, code, message, **context):
 
 
 def _float(value):
-    if value in (None, ""):
+    if value is None or (isinstance(value, str) and value == ""):
         return None
+    try:
+        if isnan(value):
+            return None
+    except TypeError:
+        pass
     return float(value)
 
 
@@ -235,15 +241,24 @@ def _validate_rows(rows, manifest, errors, warnings):
     return actual_samples
 
 
-def validate_manifest(manifest_path, strict_benchmark=False):
+def validate_manifest(
+    manifest_path,
+    strict_benchmark=False,
+    *,
+    manifest=None,
+    rows=None,
+):
+    """Validate one run, optionally using artifact data loaded by a RunStore."""
+
     manifest_path = Path(manifest_path)
     errors = []
     warnings = []
-    try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        _issue(errors, "manifest_invalid", str(exc), path=str(manifest_path))
-        return {"path": str(manifest_path), "valid": False, "errors": errors, "warnings": warnings}
+    if manifest is None:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            _issue(errors, "manifest_invalid", str(exc), path=str(manifest_path))
+            return {"path": str(manifest_path), "valid": False, "errors": errors, "warnings": warnings}
 
     for field in ("schema_version", "run_id", "experiment", "source", "measurement"):
         if field not in manifest:
@@ -326,14 +341,15 @@ def validate_manifest(manifest_path, strict_benchmark=False):
         experiment_dir = manifest_path.parent
     else:
         experiment_dir = manifest_path.parents[3]
-    rows = []
-    for csv_path in sorted(experiment_dir.glob("*.csv")):
-        try:
-            with csv_path.open(newline="", encoding="utf-8") as file:
-                for line_number, row in enumerate(csv.DictReader(file), 2):
-                    rows.append((f"{csv_path}:{line_number}", row))
-        except (OSError, csv.Error) as exc:
-            _issue(errors, "csv_invalid", str(exc), path=str(csv_path))
+    if rows is None:
+        rows = []
+        for csv_path in sorted(experiment_dir.glob("*.csv")):
+            try:
+                with csv_path.open(newline="", encoding="utf-8") as file:
+                    for line_number, row in enumerate(csv.DictReader(file), 2):
+                        rows.append((f"{csv_path}:{line_number}", row))
+            except (OSError, csv.Error) as exc:
+                _issue(errors, "csv_invalid", str(exc), path=str(csv_path))
     sample_count = _validate_rows(rows, manifest, errors, warnings)
 
     coverage = manifest.get("measurement", {}).get("coverage")

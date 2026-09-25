@@ -3,7 +3,6 @@
 import argparse
 import getpass
 import json
-import os
 from pathlib import Path
 from time import sleep
 
@@ -394,21 +393,21 @@ def _run_combined(args, workspace, monitor_runner=None):
     measurement_dir = workspace / "measurements" / source / args.experiment
     measurement_dir.mkdir(parents=True, exist_ok=True)
 
-    previous_directory = Path.cwd()
-    try:
-        os.chdir(workspace)
-        if monitor_runner is None:
-            from emers.monitor import run as monitor_runner
+    if monitor_runner is None:
+        from emers.dashboard import run as monitor_runner
 
-        print(f"Starting measurement for {source}.")
-        print(f"Dashboard: http://{args.host}:{args.port}/")
-        with experiment_run:
-            try:
-                monitor_runner(host=args.host, port=args.port, debug=args.debug)
-            except KeyboardInterrupt:
-                pass
-    finally:
-        os.chdir(previous_directory)
+    print(f"Starting measurement for {source}.")
+    print(f"Dashboard: http://{args.host}:{args.port}/")
+    with experiment_run:
+        try:
+            monitor_runner(
+                host=args.host,
+                port=args.port,
+                debug=args.debug,
+                workspace=workspace,
+            )
+        except KeyboardInterrupt:
+            pass
 
 
 def _require_files(workspace, names):
@@ -448,6 +447,33 @@ def build_parser():
     )
     validate.add_argument(
         "--pretty", action="store_true", help="Pretty-print the JSON result."
+    )
+
+    report = subparsers.add_parser(
+        "report", help="Generate a standalone HTML report from recorded run artifacts."
+    )
+    report_selection = report.add_mutually_exclusive_group()
+    report_selection.add_argument(
+        "--run",
+        help="Run ID, unique ID prefix, run directory, or run.json path (default: latest).",
+    )
+    report_selection.add_argument(
+        "--all", action="store_true", help="Generate one report for every run."
+    )
+    report.add_argument(
+        "--output",
+        type=Path,
+        help="Output HTML file or directory (default: report/<run-id>/report.html).",
+    )
+    report.add_argument("--cost-per-kwh", type=float)
+    report.add_argument("--currency")
+    report.add_argument("--gco2e-per-kwh", type=float)
+    report.add_argument("--gco2e-per-kilometer-car", type=float)
+    report.add_argument(
+        "--smoothness",
+        type=int,
+        default=1,
+        help="Rolling-window size for optional smoothed chart traces (default: 1).",
     )
 
     def add_measurement_options(command_parser):
@@ -535,12 +561,22 @@ def build_parser():
     measure = subparsers.add_parser("measure", help="Continuously record measurements.")
     add_measurement_options(measure)
 
-    monitor = subparsers.add_parser("monitor", help="Start the monitoring web application.")
-    monitor.add_argument("--host", default="127.0.0.1")
-    monitor.add_argument("--port", type=int, default=5000)
-    monitor.add_argument("--debug", action="store_true")
+    def add_dashboard_options(command_parser):
+        command_parser.add_argument("--host", default="127.0.0.1")
+        command_parser.add_argument("--port", type=int, default=5000)
+        command_parser.add_argument("--debug", action="store_true")
 
-    run = subparsers.add_parser("run", help="Measure and run the monitoring UI together.")
+    dashboard = subparsers.add_parser(
+        "dashboard", help="Start the EMERS dashboard."
+    )
+    add_dashboard_options(dashboard)
+
+    monitor = subparsers.add_parser(
+        "monitor", help="Compatibility alias for 'dashboard'."
+    )
+    add_dashboard_options(monitor)
+
+    run = subparsers.add_parser("run", help="Measure and run the dashboard together.")
     add_measurement_options(run)
     run.add_argument("--host", default="127.0.0.1")
     run.add_argument("--port", type=int, default=5000)
@@ -567,6 +603,29 @@ def main(argv=None):
         print(json.dumps(report, indent=2 if args.pretty else None, sort_keys=True))
         return 0 if report["valid"] else 1
 
+    if args.command == "report":
+        if args.smoothness < 1:
+            raise SystemExit("--smoothness must be at least 1")
+        from emers.reporting import generate_reports
+
+        try:
+            reports = generate_reports(
+                workspace,
+                run=args.run,
+                all_runs=args.all,
+                output=args.output,
+                cost_per_kwh=args.cost_per_kwh,
+                currency=args.currency,
+                gco2e_per_kwh=args.gco2e_per_kwh,
+                gco2e_per_kilometer_car=args.gco2e_per_kilometer_car,
+                smoothness=args.smoothness,
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        for report_path in reports:
+            print(report_path)
+        return 0
+
     if args.command in {"measure", "run"}:
         config_path = Path(args.config).expanduser()
         if not config_path.is_absolute():
@@ -586,9 +645,6 @@ def main(argv=None):
         return
 
     _require_files(workspace, ("settings.json", "monitor_settings.json"))
-    # The monitor currently uses project-relative paths. Import it only after
-    # selecting the workspace so imports never depend on the installed package directory.
-    os.chdir(workspace)
-    from emers.monitor import run
+    from emers.dashboard import run
 
-    run(host=args.host, port=args.port, debug=args.debug)
+    run(host=args.host, port=args.port, debug=args.debug, workspace=workspace)

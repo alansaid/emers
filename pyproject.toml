@@ -22,7 +22,6 @@ classifiers = [
 ]
 dependencies = [
   "dash>=2.17",
-  "kaleido>=0.2.1",
   "pandas>=2.2",
   "plotly>=5.18",
   "requests>=2.31",

@@ -1,6 +1,9 @@
 import json
 import asyncio
 from argparse import Namespace
+from pathlib import Path
+
+import pytest
 
 from emers.cli import (
     DEFAULT_DEVICES,
@@ -114,6 +117,82 @@ def test_source_and_legacy_device_options_share_destination():
     )
 
 
+@pytest.mark.parametrize("command", ["dashboard", "monitor"])
+def test_dashboard_command_and_monitor_alias_use_same_options(command):
+    args = build_parser().parse_args(
+        [command, "--host", "0.0.0.0", "--port", "5050", "--debug"]
+    )
+
+    assert args.command == command
+    assert args.host == "0.0.0.0"
+    assert args.port == 5050
+    assert args.debug is True
+
+
+@pytest.mark.parametrize("command", ["dashboard", "monitor"])
+def test_dashboard_command_and_monitor_alias_run_same_dashboard(
+    command, tmp_path, monkeypatch
+):
+    calls = []
+    init_workspace(tmp_path)
+    monkeypatch.setattr(
+        "emers.dashboard.run", lambda **kwargs: calls.append(kwargs)
+    )
+
+    main([
+        "--workspace",
+        str(tmp_path),
+        command,
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "5050",
+    ])
+
+    assert calls == [{
+        "host": "0.0.0.0",
+        "port": 5050,
+        "debug": False,
+        "workspace": tmp_path.resolve(),
+    }]
+
+
+def test_report_command_dispatches_run_selection_and_settings(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_generate(workspace, **kwargs):
+        calls.append((workspace, kwargs))
+        return (tmp_path / "report.html",)
+
+    monkeypatch.setattr("emers.reporting.generate_reports", fake_generate)
+
+    result = main([
+        "--workspace",
+        str(tmp_path),
+        "report",
+        "--run",
+        "abc123",
+        "--cost-per-kwh",
+        "0.42",
+        "--currency",
+        "EUR",
+        "--smoothness",
+        "3",
+    ])
+
+    assert result == 0
+    assert calls == [(tmp_path.resolve(), {
+        "run": "abc123",
+        "all_runs": False,
+        "output": None,
+        "cost_per_kwh": 0.42,
+        "currency": "EUR",
+        "gco2e_per_kwh": None,
+        "gco2e_per_kilometer_car": None,
+        "smoothness": 3,
+    })]
+
+
 def test_interactive_measure_selects_existing_device(tmp_path, monkeypatch):
     init_workspace(tmp_path)
     monkeypatch.setattr("builtins.input", lambda _: "1")
@@ -210,6 +289,7 @@ def test_edit_device_updates_fields_and_keeps_tapo_password(tmp_path, monkeypatc
 
 def test_run_combined_manages_measurement_and_monitor(tmp_path, monkeypatch):
     events = []
+    original_directory = Path.cwd()
 
     def fake_monitor(**kwargs):
         events.append(("monitor", kwargs))
@@ -228,9 +308,18 @@ def test_run_combined_manages_measurement_and_monitor(tmp_path, monkeypatch):
 
     _run_combined(args, tmp_path, monitor_runner=fake_monitor)
 
+    assert Path.cwd() == original_directory
     assert (tmp_path / "measurements" / "MockPlug" / "combined-test").is_dir()
     assert events == [
-        ("monitor", {"host": "127.0.0.1", "port": 5000, "debug": False}),
+        (
+            "monitor",
+            {
+                "host": "127.0.0.1",
+                "port": 5000,
+                "debug": False,
+                "workspace": tmp_path,
+            },
+        ),
     ]
     manifests = list(
         (tmp_path / "measurements" / "MockPlug" / "combined-test" / ".emers" / "runs").glob(
